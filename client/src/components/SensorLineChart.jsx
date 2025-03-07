@@ -100,12 +100,12 @@ const SensorLineChart = ({ data }) => {
                   fontSize: 10,
                   fill: '#4B5563',
                 }}
-                interval={1}
+                interval={0}
                 angle={-45}
                 textAnchor="end"
                 height={85}
                 tickMargin={25}
-                minTickGap={20}
+                minTickGap={10}
                 scale="band"
                 padding={{ left: 15, right: 15 }}
               />
