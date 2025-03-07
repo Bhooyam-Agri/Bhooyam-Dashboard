@@ -15,7 +15,7 @@ const relayRoutes = require('./routes/relayRoutes');
 const app = express();
 const httpServer = createServer(app);
 
-// Initialize Socket.IO
+// Initialize Socket.IO with extended configurations
 const io = new Server(httpServer, {
   cors: {
     origin: [
@@ -23,8 +23,67 @@ const io = new Server(httpServer, {
       'http://localhost:5175',
       process.env.CLIENT_URL
     ].filter(Boolean),
-    methods: ['GET', 'POST']
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+
+// Store connected clients and their last activity
+const connectedClients = new Map();
+
+// WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  connectedClients.set(socket.id, { lastActivity: Date.now() });
+
+  // Handle client joining specific rooms (if needed)
+  socket.on('subscribe', (room) => {
+    socket.join(room);
+    console.log(`Client ${socket.id} joined room: ${room}`);
+  });
+
+  // Track client activity
+  socket.on('pong', () => {
+    if (connectedClients.has(socket.id)) {
+      connectedClients.get(socket.id).lastActivity = Date.now();
+    }
+  });
+
+  socket.on('disconnect', (reason) => {
+    console.log('Client disconnected:', socket.id, 'Reason:', reason);
+    connectedClients.delete(socket.id);
+  });
+
+  // Error handling
+  socket.on('error', (error) => {
+    console.error('Socket error for client', socket.id, ':', error);
+  });
+});
+
+// Periodic cleanup of stale connections
+setInterval(() => {
+  const staleTimeout = 70000; // 70 seconds
+  const now = Date.now();
+  
+  for (const [socketId, client] of connectedClients.entries()) {
+    if (now - client.lastActivity > staleTimeout) {
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) {
+        console.log('Cleaning up stale connection:', socketId);
+        socket.disconnect(true);
+      }
+      connectedClients.delete(socketId);
+    }
   }
+}, 30000);
+
+// Make io available globally with better error handling
+global.io = io;
+
+io.on('error', (error) => {
+  console.error('Socket.IO server error:', error);
 });
 
 // Security Middleware
@@ -39,7 +98,72 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true
 }));
+
+// Custom JSON parsing middleware specifically for ESP32 data
+app.use((req, res, next) => {
+  if (req.is('application/json')) {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+    });
+    
+    req.on('end', () => {
+      if (data) {
+        try {
+          // Handle ESP32's specific JSON format
+          const sanitizedData = data
+            .replace(/:\s*nan\b/g, ': null')
+            .replace(/:\s*NaN\b/g, ': null')
+            .replace(/:\s*undefined\b/g, ': null')
+            .replace(/:\s*Infinity\b/g, ': null')
+            .replace(/:\s*-Infinity\b/g, ': null');
+            
+          // Parse the JSON data
+          const parsedData = JSON.parse(sanitizedData);
+          
+          // Handle timestamp validation at middleware level
+          if (parsedData.timestamp && typeof parsedData.timestamp === 'string') {
+            // If it's just time (HH:mm:ss), add today's date
+            if (parsedData.timestamp.match(/^\d{2}:\d{2}:\d{2}$/)) {
+              const [hours, minutes, seconds] = parsedData.timestamp.split(':').map(Number);
+              const now = new Date();
+              now.setHours(hours, minutes, seconds);
+              parsedData.timestamp = now.toISOString();
+            }
+          }
+          
+          req.body = parsedData;
+          console.log('Parsed request body:', req.body);
+          next();
+        } catch (e) {
+          console.error('JSON Parse Error:', e.message);
+          console.error('Raw data received:', data);
+          res.status(400).json({ 
+            error: 'Invalid JSON format', 
+            details: e.message,
+            rawData: data.substring(0, 200) // Log first 200 chars for debugging
+          });
+        }
+      } else {
+        next();
+      }
+    });
+  } else {
+    next();
+  }
+});
+
 app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+// Add error handler for JSON parsing
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    console.error('JSON Parse Error:', err.message);
+    return res.status(400).json({ error: 'Invalid JSON format' });
+  }
+  next();
+});
 
 // Rate limiting
 const limiter = rateLimit({
@@ -76,19 +200,6 @@ const authMiddleware = async (req, res, next) => {
     res.status(401).json({ message: 'Invalid token' });
   }
 };
-
-// WebSocket connection handling
-io.on('connection', (socket) => {
-  console.log('Client connected');
-  
-  socket.on('subscribe', (room) => {
-    socket.join(room);
-  });
-  
-  socket.on('disconnect', () => {
-    console.log('Client disconnected');
-  });
-});
 
 // Routes
 app.use('/api/auth', require('./routes/authRoutes'));

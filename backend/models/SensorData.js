@@ -3,37 +3,32 @@ const mongoose = require('mongoose');
 const sensorDataSchema = new mongoose.Schema({
   timestamp: {
     type: Date,
-    default: Date.now
+    required: true,
+    default: Date.now,
+    validate: {
+      validator: function(v) {
+        return !isNaN(v.getTime());
+      },
+      message: props => `${props.value} is not a valid timestamp!`
+    }
   },
   espId: {
     type: String,
     required: true,
-    enum: ['ESP1', 'ESP2']  // To identify which ESP sent the data
+    default: 'ESP1'
   },
-  // ESP1 Data
-  soilMoisture: {
-    type: [String],
-    required: function() { return this.espId === 'ESP1'; }
-  },
+  soilMoisture: [{
+    type: String,
+    default: "Not working"
+  }],
   dht22: {
     temp: {
       type: Number,
-      required: function() { return this.espId === 'ESP1'; }
+      default: null
     },
     hum: {
       type: Number,
-      required: function() { return this.espId === 'ESP1'; }
-    },
-    status: {
-      type: String,
-      default: 'OK'
-    }
-  },
-  // ESP2 Data
-  soilTemp: {
-    value: {
-      type: Number,
-      required: function() { return this.espId === 'ESP2'; }
+      default: null
     },
     status: {
       type: String,
@@ -43,7 +38,7 @@ const sensorDataSchema = new mongoose.Schema({
   airQuality: {
     value: {
       type: Number,
-      required: function() { return this.espId === 'ESP2'; }
+      default: null
     },
     status: {
       type: String,
@@ -53,13 +48,31 @@ const sensorDataSchema = new mongoose.Schema({
   lightIntensity: {
     value: {
       type: Number,
-      required: function() { return this.espId === 'ESP2'; }
+      default: null
+    },
+    status: {
+      type: String,
+      default: 'OK'
+    }
+  },
+  waterTemperature: {
+    value: {
+      type: Number,
+      default: null
     },
     status: {
       type: String,
       default: 'OK'
     }
   }
+});
+
+// Add a pre-save middleware to ensure timestamp is always valid
+sensorDataSchema.pre('save', function(next) {
+  if (!this.timestamp || isNaN(this.timestamp.getTime())) {
+    this.timestamp = new Date();
+  }
+  next();
 });
 
 module.exports = mongoose.model('SensorData', sensorDataSchema);

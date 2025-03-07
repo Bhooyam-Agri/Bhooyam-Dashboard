@@ -12,9 +12,28 @@ const ESP32_URL = process.env.ESP32_URL;
 // Add debug logging
 console.log('ESP32_URL:', ESP32_URL);
 
-// Add timeout to axios requests
+// Increase timeout and add retry logic
 const axiosConfig = {
-  timeout: 5000, // 5 seconds timeout
+  timeout: 10000, // 10 seconds timeout
+  retries: 3,
+  retryDelay: 1000
+};
+
+const axiosWithRetry = async (config) => {
+  let lastError;
+  for (let i = 0; i < axiosConfig.retries; i++) {
+    try {
+      return await axios(config);
+    } catch (error) {
+      lastError = error;
+      if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+        await new Promise(resolve => setTimeout(resolve, axiosConfig.retryDelay));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
 };
 
 // Initialize relay state to OFF when server starts
@@ -27,16 +46,26 @@ const initializeRelay = async () => {
 
     console.log('Initializing relay with URL:', ESP32_URL);
 
-    // Send OFF command to ESP32 at the correct endpoint
-    const response = await axios.post(`${ESP32_URL}/api/relay/toggle`, {
-      state: false
-    }, axiosConfig);
-    
-    relayState = false;
-    console.log('Relay initialized to OFF state');
+    try {
+      // Send OFF command to ESP32 at the correct endpoint
+      const response = await axiosWithRetry({
+        method: 'post',
+        url: `${ESP32_URL}/api/relay/toggle`,
+        data: { state: false },
+        timeout: axiosConfig.timeout
+      });
+      
+      console.log('Relay initialized successfully:', response.data);
+      relayState = false;
+    } catch (error) {
+      if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+        console.error('Failed to initialize relay: connection timeout. Will retry on next request.');
+      } else {
+        console.error('Failed to initialize relay:', error.message);
+      }
+    }
   } catch (error) {
-    console.error('Failed to initialize relay:', error.message);
-    console.error('Full error:', error);
+    console.error('Relay initialization error:', error);
   }
 };
 
@@ -54,9 +83,12 @@ exports.toggleRelay = async (req, res) => {
 
     try {
       // Send command to ESP32 at the correct endpoint
-      const response = await axios.post(`${ESP32_URL}/api/relay/toggle`, {
-        state: command
-      }, { timeout: 5000 });
+      const response = await axiosWithRetry({
+        method: 'post',
+        url: `${ESP32_URL}/api/relay/toggle`,
+        data: { state: command },
+        timeout: axiosConfig.timeout
+      });
 
       if (response.status === 200) {
         relayState = newState;
@@ -86,8 +118,10 @@ exports.getRelayState = async (req, res) => {
 
     try {
       // Fetch relay state from ESP32
-      const response = await axios.get(`${ESP32_URL}/api/relay/state`, { 
-        timeout: 5000 
+      const response = await axiosWithRetry({
+        method: 'get',
+        url: `${ESP32_URL}/api/relay/state`,
+        timeout: axiosConfig.timeout
       });
       relayState = response.data.state === 'ON';
       return res.json({ state: relayState });
@@ -106,4 +140,4 @@ exports.getRelayState = async (req, res) => {
       details: error.message 
     });
   }
-}; 
+};

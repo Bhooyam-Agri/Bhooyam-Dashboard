@@ -3,66 +3,135 @@ const mongoose = require('mongoose');
 const { Parser } = require('json2csv');
 const moment = require('moment-timezone');
 
-// @desc    Receive data from ESP1 (soil moisture and DHT22)
-// @route   POST /data/esp1
-// @access  Public
-exports.receiveESP1Data = async (req, res) => {
-  try {
-    const { soilMoisture, dht22 } = req.body;
-    
-    if (!soilMoisture || !dht22) {
-      return res.status(400).json({ error: 'Incomplete ESP1 sensor data.' });
-    }
-
-    const newSensorData = new SensorData({
-      espId: 'ESP1',
-      soilMoisture,
-      dht22: {
-        temp: dht22.temp,
-        hum: dht22.hum,
-        status: dht22.status || 'OK'
-      }
-    });
-
-    await newSensorData.save();
-    res.status(201).json({ message: 'ESP1 data saved successfully' });
-  } catch (error) {
-    console.error('Error saving ESP1 sensor data:', error);
-    res.status(500).json({ error: 'Server error', details: error.message });
+// Utility function to parse and validate sensor values
+const parseSensorValue = (value) => {
+  if (value === null || value === undefined || value === 'nan' || value === NaN || Number.isNaN(value)) {
+    return null;
   }
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
 };
 
-// @desc    Receive data from ESP2 (soil temp, air quality, light)
-// @route   POST /data/esp2
+// Utility function to parse soil moisture percentage
+const parseSoilMoisture = (value) => {
+  if (!value) return "Not working";
+  // Remove the % symbol if present and convert to number
+  const numValue = parseFloat(value.replace('%', ''));
+  return Number.isFinite(numValue) ? String(numValue) + "%" : "Not working";
+};
+
+// Utility function to create a valid timestamp
+const createValidTimestamp = (timeString) => {
+  // If it's already a valid date object or timestamp, return it
+  if (timeString instanceof Date || typeof timeString === 'number') {
+    return new Date(timeString);
+  }
+
+  // If it's a time string (HH:mm:ss), create today's date with that time
+  if (typeof timeString === 'string' && timeString.match(/^\d{2}:\d{2}:\d{2}$/)) {
+    const [hours, minutes, seconds] = timeString.split(':').map(Number);
+    const now = new Date();
+    now.setHours(hours, minutes, seconds);
+    return now;
+  }
+
+  // Try parsing as ISO string or other formats
+  const parsed = new Date(timeString);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  // If all else fails, return current time
+  return new Date();
+};
+
+// @desc    Receive combined ESP data
+// @route   POST /data/sensor
 // @access  Public
-exports.receiveESP2Data = async (req, res) => {
+exports.receiveESPData = async (req, res) => {
   try {
-    const { soilTemp, airQuality, lightIntensity } = req.body;
+    let rawData;
     
-    if (!soilTemp || !airQuality || !lightIntensity) {
-      return res.status(400).json({ error: 'Incomplete ESP2 sensor data.' });
+    try {
+      // Handle raw body if it's a string
+      if (typeof req.body === 'string') {
+        // Replace any NaN values with null before parsing
+        const sanitizedJson = req.body
+          .replace(/:\s*nan\b/g, ': null')
+          .replace(/:\s*NaN\b/g, ': null')
+          .replace(/:\s*undefined\b/g, ': null');
+        rawData = JSON.parse(sanitizedJson);
+      } else {
+        rawData = req.body;
+      }
+
+      console.log('Received data:', rawData); // Debug log
+    } catch (parseError) {
+      console.error('JSON parse error:', parseError, 'Raw body:', req.body);
+      return res.status(400).json({ error: 'Invalid JSON data format' });
     }
 
+    // Extract and validate timestamp
+    const timestamp = createValidTimestamp(rawData.timestamp);
+    console.log('Parsed timestamp:', timestamp); // Debug log
+
+    // Extract other data with proper type checking
+    const {
+      soilMoisture = ["Not working", "Not working"],
+      dht22 = { temp: null, hum: null, status: "Not working" },
+      airQuality = { value: null, status: "Not working" },
+      lightIntensity = { value: null, status: "Not working" },
+      waterTemperature = { value: null, status: "Not working" }
+    } = rawData;
+
+    // Create new sensor data with validated values
     const newSensorData = new SensorData({
-      espId: 'ESP2',
-      soilTemp: {
-        value: soilTemp.value,
-        status: soilTemp.status || 'OK'
+      timestamp: timestamp,
+      espId: 'ESP1',
+      soilMoisture: Array.isArray(soilMoisture) 
+        ? soilMoisture.map(parseSoilMoisture)
+        : ["Not working", "Not working"],
+      dht22: {
+        temp: parseSensorValue(dht22.temp),
+        hum: parseSensorValue(dht22.hum),
+        status: dht22.status || 'Not working'
       },
       airQuality: {
-        value: airQuality.value,
-        status: airQuality.status || 'OK'
+        value: parseSensorValue(airQuality.value),
+        status: airQuality.status || 'Not working'
       },
       lightIntensity: {
-        value: lightIntensity.value,
-        status: lightIntensity.status || 'OK'
+        value: parseSensorValue(lightIntensity.value),
+        status: lightIntensity.status || 'Not working'
+      },
+      waterTemperature: {
+        value: parseSensorValue(waterTemperature.value),
+        status: waterTemperature.status || 'Not working'
       }
     });
 
+    console.log('Saving sensor data:', {
+      ...newSensorData.toObject(),
+      timestamp: timestamp.toISOString()
+    });
+
     await newSensorData.save();
-    res.status(201).json({ message: 'ESP2 data saved successfully' });
+
+    // Emit the new data via WebSocket
+    if (global.io) {
+      global.io.emit('sensorData', {
+        type: 'update',
+        data: newSensorData
+      });
+    }
+
+    res.status(201).json({ 
+      message: 'Sensor data saved successfully',
+      timestamp: timestamp.toISOString()
+    });
+
   } catch (error) {
-    console.error('Error saving ESP2 sensor data:', error);
+    console.error('Error saving sensor data:', error);
     res.status(500).json({ error: 'Server error', details: error.message });
   }
 };
@@ -72,35 +141,44 @@ exports.receiveESP2Data = async (req, res) => {
 // @access  Public
 exports.getData = async (req, res) => {
   try {
-    const { page = 1, limit = 10, startDate, endDate, espId } = req.query;
+    const { page = 1, limit = 15, startDate, endDate } = req.query;
     let query = {};
 
-    if (startDate || endDate) {
-      query.timestamp = {};
-      if (startDate) query.timestamp.$gte = new Date(startDate);
-      if (endDate) query.timestamp.$lte = new Date(endDate);
+    // Handle real-time updates by setting the query to get latest data
+    if (!startDate && !endDate) {
+      const now = new Date();
+      const thirtyMinutesAgo = new Date(now.getTime() - (30 * 60 * 1000));
+      query.timestamp = { $gte: thirtyMinutesAgo };
+    } else {
+      if (startDate || endDate) {
+        query.timestamp = {};
+        if (startDate) query.timestamp.$gte = new Date(startDate);
+        if (endDate) query.timestamp.$lte = new Date(endDate);
+      }
     }
 
-    if (espId) {
-      query.espId = espId;
-    }
+    // Set headers for real-time updates
+    res.set({
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0'
+    });
 
-    const totalDocuments = await SensorData.countDocuments(query);
-    const totalPages = Math.ceil(totalDocuments / limit);
-
+    // Fetch latest data
     const sensorData = await SensorData.find(query)
       .sort({ timestamp: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
 
     res.status(200).json({
       items: sensorData,
-      totalPages,
-      currentPage: parseInt(page),
+      totalPages: 1,
+      currentPage: parseInt(page)
     });
+
   } catch (error) {
-    console.error('Error fetching sensor data:', error);
-    res.status(500).json({ error: 'Server error while fetching data.' });
+    console.error('Error in getData:', error);
+    res.status(500).json({ error: 'Server error while fetching data' });
   }
 };
 
@@ -136,7 +214,7 @@ exports.exportData = async (req, res) => {
       ...sensorData[0].soilMoisture.map((_, index) => `soilMoisture${index + 1}`),
       ...sensorData[0].dht22.map((_, index) => `dht22${index + 1}_temp`),
       ...sensorData[0].dht22.map((_, index) => `dht22${index + 1}_hum`),
-      ...sensorData[0].soilTemp.map((_, index) => `soilTemp${index + 1}`),
+      ...sensorData[0].waterTemperature.map((_, index) => `waterTemperature${index + 1}`),
       ...sensorData[0].airQuality.map((_, index) => `airQuality${index + 1}`),
       ...sensorData[0].lightIntensity.map((_, index) => `lightIntensity${index + 1}`),
     ];
@@ -155,9 +233,9 @@ exports.exportData = async (req, res) => {
           acc[`dht22${index + 1}_hum`] = dht.hum !== undefined ? dht.hum : 'Not working';
           return acc;
         }, {}),
-        ...entry.soilTemp.reduce((acc, value, index) => {
-          acc[`soilTemp${index + 1}`] = value.value;
-          acc[`soilTemp${index + 1}_status`] = value.status;
+        ...entry.waterTemperature.reduce((acc, value, index) => {
+          acc[`waterTemperature${index + 1}`] = value.value;
+          acc[`waterTemperature${index + 1}_status`] = value.status;
           return acc;
         }, {}),
         ...entry.airQuality.reduce((acc, value, index) => {

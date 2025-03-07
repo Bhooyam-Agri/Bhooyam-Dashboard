@@ -1,18 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const { 
-  receiveESP1Data, 
-  receiveESP2Data, 
+  receiveESPData, 
   getData, 
   exportData 
 } = require('../controllers/dataController');
 const SensorData = require('../models/SensorData');
 
-// ESP1 data route (soil moisture and DHT22)
-router.post('/esp1', receiveESP1Data);
-
-// ESP2 data route (soil temp, air quality, light)
-router.post('/esp2', receiveESP2Data);
+// Combined ESP data route
+router.post('/sensor', receiveESPData);
 
 // Get all data with optional filtering
 router.get('/', getData);
