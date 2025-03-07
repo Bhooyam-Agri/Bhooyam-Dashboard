@@ -31,7 +31,7 @@ const createValidTimestamp = (timeString) => {
   if (typeof timeString === 'string' && timeString.match(/^\d{2}:\d{2}:\d{2}$/)) {
     const [hours, minutes, seconds] = timeString.split(':').map(Number);
     const now = new Date();
-    now.setHours(hours, minutes, seconds);
+    now.setHours(hours, minutes, seconds, 0); // Set milliseconds to 0
     return now;
   }
 
@@ -45,89 +45,37 @@ const createValidTimestamp = (timeString) => {
   return new Date();
 };
 
+const convertToIST = (timestamp) => {
+  return new Date(timestamp).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour12: true,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+};
+
 // @desc    Receive combined ESP data
 // @route   POST /data/sensor
 // @access  Public
 exports.receiveESPData = async (req, res) => {
   try {
-    let rawData;
+    console.log('Raw ESP Data:', req.body);
     
-    try {
-      // Handle raw body if it's a string
-      if (typeof req.body === 'string') {
-        // Replace any NaN values with null before parsing
-        const sanitizedJson = req.body
-          .replace(/:\s*nan\b/g, ': null')
-          .replace(/:\s*NaN\b/g, ': null')
-          .replace(/:\s*undefined\b/g, ': null');
-        rawData = JSON.parse(sanitizedJson);
-      } else {
-        rawData = req.body;
-      }
-
-      console.log('Received data:', rawData); // Debug log
-    } catch (parseError) {
-      console.error('JSON parse error:', parseError, 'Raw body:', req.body);
-      return res.status(400).json({ error: 'Invalid JSON data format' });
-    }
-
-    // Extract and validate timestamp
-    const timestamp = createValidTimestamp(rawData.timestamp);
-    console.log('Parsed timestamp:', timestamp); // Debug log
-
-    // Extract other data with proper type checking
-    const {
-      soilMoisture = ["Not working", "Not working"],
-      dht22 = { temp: null, hum: null, status: "Not working" },
-      airQuality = { value: null, status: "Not working" },
-      lightIntensity = { value: null, status: "Not working" },
-      waterTemperature = { value: null, status: "Not working" }
-    } = rawData;
-
-    // Create new sensor data with validated values
-    const newSensorData = new SensorData({
-      timestamp: timestamp,
-      espId: 'ESP1',
-      soilMoisture: Array.isArray(soilMoisture) 
-        ? soilMoisture.map(parseSoilMoisture)
-        : ["Not working", "Not working"],
-      dht22: {
-        temp: parseSensorValue(dht22.temp),
-        hum: parseSensorValue(dht22.hum),
-        status: dht22.status || 'Not working'
-      },
-      airQuality: {
-        value: parseSensorValue(airQuality.value),
-        status: airQuality.status || 'Not working'
-      },
-      lightIntensity: {
-        value: parseSensorValue(lightIntensity.value),
-        status: lightIntensity.status || 'Not working'
-      },
-      waterTemperature: {
-        value: parseSensorValue(waterTemperature.value),
-        status: waterTemperature.status || 'Not working'
-      }
-    });
-
-    console.log('Saving sensor data:', {
-      ...newSensorData.toObject(),
-      timestamp: timestamp.toISOString()
-    });
-
+    // Use raw data without timestamp modification
+    const newSensorData = new SensorData(req.body);
     await newSensorData.save();
 
-    // Emit the new data via WebSocket
     if (global.io) {
       global.io.emit('sensorData', {
         type: 'update',
-        data: newSensorData
+        data: req.body
       });
     }
 
     res.status(201).json({ 
       message: 'Sensor data saved successfully',
-      timestamp: timestamp.toISOString()
+      data: req.body
     });
 
   } catch (error) {
@@ -141,31 +89,10 @@ exports.receiveESPData = async (req, res) => {
 // @access  Public
 exports.getData = async (req, res) => {
   try {
-    const { page = 1, limit = 15, startDate, endDate } = req.query;
-    let query = {};
+    const { page = 1, limit = 15 } = req.query;
 
-    // Handle real-time updates by setting the query to get latest data
-    if (!startDate && !endDate) {
-      const now = new Date();
-      const thirtyMinutesAgo = new Date(now.getTime() - (30 * 60 * 1000));
-      query.timestamp = { $gte: thirtyMinutesAgo };
-    } else {
-      if (startDate || endDate) {
-        query.timestamp = {};
-        if (startDate) query.timestamp.$gte = new Date(startDate);
-        if (endDate) query.timestamp.$lte = new Date(endDate);
-      }
-    }
-
-    // Set headers for real-time updates
-    res.set({
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0'
-    });
-
-    // Fetch latest data
-    const sensorData = await SensorData.find(query)
+    // Fetch data without timestamp modification
+    const sensorData = await SensorData.find()
       .sort({ timestamp: -1 })
       .limit(parseInt(limit))
       .lean();

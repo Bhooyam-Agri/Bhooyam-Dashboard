@@ -10,6 +10,7 @@ const compression = require('compression');
 const jwt = require('jsonwebtoken');
 const connectDB = require('./config/db');
 const relayRoutes = require('./routes/relayRoutes');
+const SensorData = require('./models/SensorData');
 
 // Initialize Express
 const app = express();
@@ -30,7 +31,7 @@ const io = new Server(httpServer, {
   pingInterval: 25000
 });
 
-// Store connected clients and their last activity
+// Store connected clients and track their activity
 const connectedClients = new Map();
 
 // WebSocket connection handling
@@ -38,53 +39,43 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   connectedClients.set(socket.id, { lastActivity: Date.now() });
 
-  // Handle client joining specific rooms (if needed)
+  // Handle requests for missed data
+  socket.on('requestMissedData', async ({ lastTimestamp }) => {
+    try {
+      // Fetch data since last known timestamp
+      const missedData = await SensorData.find({
+        timestamp: { $gt: new Date(parseInt(lastTimestamp)) }
+      })
+      .sort({ timestamp: 1 })
+      .lean();
+
+      // Send missed data to client
+      if (missedData.length > 0) {
+        missedData.forEach(data => {
+          socket.emit('sensorData', {
+            type: 'update',
+            data: data
+          });
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching missed data:', error);
+    }
+  });
+
   socket.on('subscribe', (room) => {
     socket.join(room);
     console.log(`Client ${socket.id} joined room: ${room}`);
   });
 
-  // Track client activity
-  socket.on('pong', () => {
-    if (connectedClients.has(socket.id)) {
-      connectedClients.get(socket.id).lastActivity = Date.now();
-    }
-  });
-
-  socket.on('disconnect', (reason) => {
-    console.log('Client disconnected:', socket.id, 'Reason:', reason);
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
     connectedClients.delete(socket.id);
   });
-
-  // Error handling
-  socket.on('error', (error) => {
-    console.error('Socket error for client', socket.id, ':', error);
-  });
 });
 
-// Periodic cleanup of stale connections
-setInterval(() => {
-  const staleTimeout = 70000; // 70 seconds
-  const now = Date.now();
-  
-  for (const [socketId, client] of connectedClients.entries()) {
-    if (now - client.lastActivity > staleTimeout) {
-      const socket = io.sockets.sockets.get(socketId);
-      if (socket) {
-        console.log('Cleaning up stale connection:', socketId);
-        socket.disconnect(true);
-      }
-      connectedClients.delete(socketId);
-    }
-  }
-}, 30000);
-
-// Make io available globally with better error handling
+// Make io available globally
 global.io = io;
-
-io.on('error', (error) => {
-  console.error('Socket.IO server error:', error);
-});
 
 // Security Middleware
 app.use(helmet());
@@ -110,7 +101,7 @@ app.use((req, res, next) => {
     req.on('end', () => {
       if (data) {
         try {
-          // Handle ESP32's specific JSON format
+          // Handle ESP32's specific JSON format but preserve timestamp
           const sanitizedData = data
             .replace(/:\s*nan\b/g, ': null')
             .replace(/:\s*NaN\b/g, ': null')
@@ -118,26 +109,12 @@ app.use((req, res, next) => {
             .replace(/:\s*Infinity\b/g, ': null')
             .replace(/:\s*-Infinity\b/g, ': null');
             
-          // Parse the JSON data
-          const parsedData = JSON.parse(sanitizedData);
-          
-          // Handle timestamp validation at middleware level
-          if (parsedData.timestamp && typeof parsedData.timestamp === 'string') {
-            // If it's just time (HH:mm:ss), add today's date
-            if (parsedData.timestamp.match(/^\d{2}:\d{2}:\d{2}$/)) {
-              const [hours, minutes, seconds] = parsedData.timestamp.split(':').map(Number);
-              const now = new Date();
-              now.setHours(hours, minutes, seconds);
-              parsedData.timestamp = now.toISOString();
-            }
-          }
-          
-          req.body = parsedData;
-          console.log('Parsed request body:', req.body);
+          req.body = JSON.parse(sanitizedData);
+          console.log('ESP32 data received with timestamp:', req.body.timestamp);
           next();
         } catch (e) {
           console.error('JSON Parse Error:', e.message);
-          console.error('Raw data received:', data);
+          console.error('Raw data:', data);
           res.status(400).json({ 
             error: 'Invalid JSON format', 
             details: e.message,

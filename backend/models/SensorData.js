@@ -2,15 +2,9 @@ const mongoose = require('mongoose');
 
 const sensorDataSchema = new mongoose.Schema({
   timestamp: {
-    type: Date,
+    type: String,  // Store raw timestamp string from ESP32
     required: true,
-    default: Date.now,
-    validate: {
-      validator: function(v) {
-        return !isNaN(v.getTime());
-      },
-      message: props => `${props.value} is not a valid timestamp!`
-    }
+    trim: true
   },
   espId: {
     type: String,
@@ -18,61 +12,27 @@ const sensorDataSchema = new mongoose.Schema({
     default: 'ESP1'
   },
   soilMoisture: [{
-    type: String,
-    default: "Not working"
+    type: String
   }],
   dht22: {
-    temp: {
-      type: Number,
-      default: null
-    },
-    hum: {
-      type: Number,
-      default: null
-    },
-    status: {
-      type: String,
-      default: 'OK'
-    }
+    temp: Number,
+    hum: Number,
+    status: String
   },
   airQuality: {
-    value: {
-      type: Number,
-      default: null
-    },
-    status: {
-      type: String,
-      default: 'OK'
-    }
+    value: Number,
+    status: String
   },
   lightIntensity: {
-    value: {
-      type: Number,
-      default: null
-    },
-    status: {
-      type: String,
-      default: 'OK'
-    }
+    value: Number,
+    status: String
   },
   waterTemperature: {
-    value: {
-      type: Number,
-      default: null
-    },
-    status: {
-      type: String,
-      default: 'OK'
-    }
+    value: Number,
+    status: String
   }
-});
-
-// Add a pre-save middleware to ensure timestamp is always valid
-sensorDataSchema.pre('save', function(next) {
-  if (!this.timestamp || isNaN(this.timestamp.getTime())) {
-    this.timestamp = new Date();
-  }
-  next();
+}, {
+  strict: true  // Only allow defined schema fields
 });
 
 module.exports = mongoose.model('SensorData', sensorDataSchema);

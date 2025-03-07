@@ -48,20 +48,10 @@ api.interceptors.response.use(
 
 let lastDataTimestamp = null;
 
-export const fetchSensorData = async (page = 1, limit = 15, startDate, endDate, interval) => {
+export const fetchSensorData = async (page = 1, limit = 15) => {
   try {
-    const params = {
-      page,
-      limit,
-      timestamp: Date.now() // Add timestamp to prevent caching
-    };
-
-    if (startDate) params.startDate = startDate;
-    if (endDate) params.endDate = endDate;
-    if (interval) params.interval = interval;
-
     const response = await api.get('/data', { 
-      params,
+      params: { page, limit },
       headers: {
         'Cache-Control': 'no-cache',
         'Pragma': 'no-cache',

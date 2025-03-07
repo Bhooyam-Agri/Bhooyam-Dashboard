@@ -7,8 +7,6 @@ import Filter from "./Filter";
 import DownloadCSV from "./DownloadCSV";
 import HiddenSensors from "./HiddenSensors";
 import RelayControl from "./RelayControl";
-import TimeRangeSelector from './TimeRangeSelector';
-import CombinedLineChart from './CombinedLineChart';
 import socketService from '../services/socketService';
 
 const Dashboard = () => {
@@ -30,48 +28,37 @@ const Dashboard = () => {
   const [hiddenSensors, setHiddenSensors] = useState([]);
   const [timeInterval, setTimeInterval] = useState(60);
 
-  useEffect(() => {
-    loadInitialData();
-    
-    // Set up WebSocket connection for real-time updates
-    const unsubscribe = socketService.onSensorData((data) => {
-      if (data.type === 'update') {
-        setSensorData(prevData => {
-          const newReading = data.data;
-          
-          // Don't update if date filter is active
-          if (filters.startDate || filters.endDate) return prevData;
-          
-          // Update averages with new reading
-          setAverageData(calculateAverages([newReading]));
-          
-          // Add new reading to the start and maintain last 15 readings
-          return [newReading, ...prevData].slice(0, 15);
-        });
-      }
+  const formatIndianTime = (timestamp) => {
+    return new Date(timestamp).toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      hour12: true,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
     });
-
-    // Connect to WebSocket
-    socketService.connect();
-
-    return () => {
-      unsubscribe();
-      socketService.disconnect();
-    };
-  }, [filters]);
+  };
 
   const loadInitialData = async () => {
     setLoading(true);
+    setError(null);
     try {
-      const startDate = filters.startDate?.toISOString();
-      const endDate = filters.endDate?.toISOString();
-      const data = await fetchSensorData(1, 15, startDate, endDate);
+      const data = await fetchSensorData();
       if (data.items && Array.isArray(data.items)) {
-        setSensorData(data.items);
-        if (data.items.length > 0) {
-          setAverageData(calculateAverages([data.items[0]]));
+        const validData = data.items.filter(item => {
+          return item && item.timestamp && (
+            (Array.isArray(item.soilMoisture) && item.soilMoisture.length > 0) ||
+            item.dht22?.temp || 
+            item.dht22?.hum || 
+            item.waterTemperature?.value ||
+            item.airQuality?.value ||
+            item.lightIntensity?.value
+          );
+        });
+        
+        if (validData.length > 0) {
+          setSensorData(validData);
+          setAverageData(calculateAverages([validData[0]]));
         }
-        setTotalPages(data.totalPages);
       }
     } catch (error) {
       console.error("Error loading initial data:", error);
@@ -79,6 +66,36 @@ const Dashboard = () => {
     }
     setLoading(false);
   };
+
+  useEffect(() => {
+    loadInitialData();
+    
+    const cleanup = socketService.onSensorData((message) => {
+      if (message.type === 'update' && message.data) {
+        setSensorData(prevData => {
+          const newData = message.data;
+          
+          // Validate new data has timestamp
+          if (!newData?.timestamp) return prevData;
+          
+          // Add new reading at start and maintain last 15 readings
+          const updatedData = [newData, ...prevData].slice(0, 15);
+          
+          // Update averages with new reading
+          setAverageData(calculateAverages([newData]));
+          
+          return updatedData;
+        });
+      }
+    });
+
+    socketService.connect();
+
+    return () => {
+      cleanup();
+      socketService.disconnect();
+    };
+  }, []);
 
   const fetchLatestData = async () => {
     if (filters.startDate || filters.endDate) return; // Don't update if date filter is active
@@ -188,14 +205,6 @@ const Dashboard = () => {
     <div className="dashboard container mx-auto p-4">
       <h1 className="text-4xl font-bold mb-8 text-center">Sensor Dashboard</h1>
 
-      {/* Add TimeRangeSelector before other components */}
-      <div className="mb-8">
-        <TimeRangeSelector 
-          onRangeChange={handleTimeRangeChange}
-          onIntervalChange={handleIntervalChange}
-        />
-      </div>
-
       <div className="flex flex-col md:flex-row justify-between items-center mb-8 space-y-4 md:space-y-0">
         <Filter onFilter={handleFilter} />
         <DownloadCSV filters={filters} />
@@ -220,14 +229,6 @@ const Dashboard = () => {
                 onUnhide={handleUnhideSensor}
                 onUnhideAll={handleUnhideAll}
               />
-
-              {/* Combined chart now uses the same data as individual charts */}
-              <div className="mb-12">
-                <CombinedLineChart 
-                  data={sensorData}
-                  timeInterval={timeInterval}
-                />
-              </div>
 
               <div className="speedometers mb-12">
                 <div className="flex justify-between items-center mb-6">

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const SensorLineChart = ({ data }) => {
@@ -8,38 +8,31 @@ const SensorLineChart = ({ data }) => {
     environmental: 'line'
   });
 
+  const getDateHeader = (data) => {
+    if (!data || data.length === 0) return '';
+    const today = new Date().toLocaleDateString('en-IN');
+    const dataDate = new Date(data[0].timestamp).toLocaleDateString('en-IN');
+    return dataDate === today ? 'Today' : dataDate;
+  };
+
   const formatData = useMemo(() => {
     if (!data || data.length === 0) return [];
     
-    // Sort by timestamp ascending for proper line plotting
-    const sortedData = [...data]
-      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-    return sortedData.map(entry => {
-      const parseValue = (value) => {
-        if (value === 0 || value === '0') return 0;
-        if (value === null || value === undefined || isNaN(value)) return 0;
-        return Number(value);
-      };
-
-      const parsePercentage = (value) => {
-        if (!value) return 0;
-        const numValue = parseFloat(value.replace('%', ''));
-        return isNaN(numValue) ? 0 : numValue;
-      };
-
-      return {
-        timestamp: new Date(entry.timestamp).toLocaleString(),
-        'Soil Moisture 1': parsePercentage(entry.soilMoisture?.[0]),
-        'Soil Moisture 2': parsePercentage(entry.soilMoisture?.[1]),
-        'Air Temp': parseValue(entry.dht22?.temp),
-        'Air Humidity': parseValue(entry.dht22?.hum),
-        'Water Temp': parseValue(entry.waterTemperature?.value),
-        'Air Quality': parseValue(entry.airQuality?.value),
-        'Light Level': parseValue(entry.lightIntensity?.value)
-      };
-    });
-  }, [data]); // Only recompute when data changes
+    // Sort by timestamp to ensure proper ordering
+    return [...data].sort((a, b) => {
+      return a.timestamp.localeCompare(b.timestamp);
+    }).map(entry => ({
+      // Use raw timestamp from ESP32
+      timestamp: entry.timestamp,
+      'Soil Moisture 1': entry.soilMoisture?.[0]?.replace('%', '') || null,
+      'Soil Moisture 2': entry.soilMoisture?.[1]?.replace('%', '') || null,
+      'Air Temp': entry.dht22?.temp || null,
+      'Air Humidity': entry.dht22?.hum || null,
+      'Water Temp': entry.waterTemperature?.value || null,
+      'Air Quality': entry.airQuality?.value || null,
+      'Light Level': entry.lightIntensity?.value || null
+    }));
+  }, [data]);
 
   const chartConfigs = {
     moisture: {
@@ -80,40 +73,55 @@ const SensorLineChart = ({ data }) => {
 
     return (
       <div className="bg-white p-4 rounded-lg shadow">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">{config.title}</h3>
-          <button 
-            onClick={() => toggleChartType(chartId)}
-            className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
-          >
-            Switch to {isBar ? 'Line' : 'Bar'} Chart
-          </button>
+        <div className="flex flex-col mb-4">
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-semibold">{config.title}</h3>
+            <button 
+              onClick={() => toggleChartType(chartId)}
+              className="px-3 py-1 text-sm bg-gray-100 hover:bg-gray-200 rounded-md transition-colors"
+            >
+              Switch to {isBar ? 'Line' : 'Bar'} Chart
+            </button>
+          </div>
+          <div className="text-sm text-gray-500 mt-1">
+            {getDateHeader(data)}
+          </div>
         </div>
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
-            <ChartComponent data={formatData}>
+            <ChartComponent 
+              data={formatData}
+              margin={{ top: 20, right: 35, left: 25, bottom: 70 }}
+            >
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis 
                 dataKey="timestamp"
-                tick={{ fontSize: 10 }}
+                tick={{ 
+                  fontSize: 10,
+                  fill: '#4B5563',
+                }}
+                interval={1}
                 angle={-45}
                 textAnchor="end"
-                height={60}
-                interval={0}
+                height={85}
+                tickMargin={25}
+                minTickGap={20}
+                scale="band"
+                padding={{ left: 15, right: 15 }}
               />
               <YAxis 
                 domain={config.yAxisDomain}
+                allowDataOverflow={false}
                 tickFormatter={(value) => Math.round(value)}
               />
               <Tooltip 
                 formatter={(value) => {
-                  if (value === null) return 'No data';
-                  if (value === 0) return '0';
-                  return value.toFixed(2);
+                  if (value === null || value === undefined) return 'No data';
+                  return value;
                 }}
-                labelFormatter={(label) => new Date(label).toLocaleString()}
+                labelFormatter={(label) => `Time: ${label}`}
               />
-              <Legend />
+              <Legend verticalAlign="top" height={36}/>
               {config.dataKeys.map((key, index) => (
                 <DataComponent
                   key={key}
