@@ -10,9 +10,16 @@ const SensorLineChart = ({ data }) => {
 
   const getDateHeader = (data) => {
     if (!data || data.length === 0) return '';
-    const today = new Date().toLocaleDateString('en-IN');
-    const dataDate = new Date(data[0].timestamp).toLocaleDateString('en-IN');
-    return dataDate === today ? 'Today' : dataDate;
+    const now = new Date();
+    const currentTime = now.toLocaleTimeString('en-IN', {
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+    
+    // Compare only the time portion
+    return currentTime.split(':')[0] === data[0].timestamp.split(':')[0] ? 'Current Hour' : data[0].timestamp;
   };
 
   const formatData = useMemo(() => {
@@ -20,9 +27,9 @@ const SensorLineChart = ({ data }) => {
     
     // Sort by timestamp to ensure proper ordering
     return [...data].sort((a, b) => {
-      return a.timestamp.localeCompare(b.timestamp);
+      // Sort timestamps directly as strings (HH:mm:ss format)
+      return b.timestamp.localeCompare(a.timestamp);
     }).map(entry => ({
-      // Use raw timestamp from ESP32
       timestamp: entry.timestamp,
       'Soil Moisture 1': entry.soilMoisture?.[0]?.replace('%', '') || null,
       'Soil Moisture 2': entry.soilMoisture?.[1]?.replace('%', '') || null,
@@ -63,9 +70,15 @@ const SensorLineChart = ({ data }) => {
   };
 
   const renderChart = (config, chartId) => {
-    if (!formatData.length) {
-      return <div className="text-center p-4">No data available</div>;
-    }
+    if (!formatData.length) return null;
+
+    const calculateTickInterval = () => {
+      // Show fewer ticks for better readability
+      const dataLength = formatData.length;
+      if (dataLength <= 5) return 0;  // Show all points for small datasets
+      if (dataLength <= 8) return 1;  // Show every other point
+      return 2;  // Show every third point for larger datasets
+    };
 
     const isBar = chartTypes[chartId] === 'bar';
     const ChartComponent = isBar ? BarChart : LineChart;
@@ -91,23 +104,23 @@ const SensorLineChart = ({ data }) => {
           <ResponsiveContainer width="100%" height="100%">
             <ChartComponent 
               data={formatData}
-              margin={{ top: 20, right: 35, left: 25, bottom: 70 }}
+              margin={{ top: 20, right: 30, left: 20, bottom: 35 }}
             >
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis 
                 dataKey="timestamp"
                 tick={{ 
-                  fontSize: 10,
-                  fill: '#4B5563',
+                  fontSize: 12,
+                  fill: '#374151',
                 }}
-                interval={0}
+                interval={1}
                 angle={-45}
                 textAnchor="end"
                 height={85}
                 tickMargin={25}
-                minTickGap={10}
+                minTickGap={20}
                 scale="band"
-                padding={{ left: 15, right: 15 }}
+                padding={{ left: 10, right: 10 }}
               />
               <YAxis 
                 domain={config.yAxisDomain}

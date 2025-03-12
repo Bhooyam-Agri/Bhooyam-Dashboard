@@ -60,22 +60,23 @@ const convertToIST = (timestamp) => {
 // @access  Public
 exports.receiveESPData = async (req, res) => {
   try {
-    console.log('Raw ESP Data:', req.body);
-    
-    // Use raw data without timestamp modification
-    const newSensorData = new SensorData(req.body);
+    const rawData = req.body;
+    console.log('Raw ESP Data:', rawData);
+
+    // Pass through the raw data without any timestamp modification
+    const newSensorData = new SensorData(rawData);
     await newSensorData.save();
 
     if (global.io) {
       global.io.emit('sensorData', {
         type: 'update',
-        data: req.body
+        data: rawData  // Send raw data with original timestamp
       });
     }
 
     res.status(201).json({ 
       message: 'Sensor data saved successfully',
-      data: req.body
+      data: rawData
     });
 
   } catch (error) {
@@ -89,10 +90,17 @@ exports.receiveESPData = async (req, res) => {
 // @access  Public
 exports.getData = async (req, res) => {
   try {
-    const { page = 1, limit = 15 } = req.query;
+    const { page = 1, limit = 15, startDate, endDate } = req.query;
 
-    // Fetch data without timestamp modification
-    const sensorData = await SensorData.find()
+    let query = {};
+    if (startDate || endDate) {
+      query.timestamp = {};
+      if (startDate) query.timestamp.$gte = startDate;
+      if (endDate) query.timestamp.$lte = endDate;
+    }
+
+    // Send raw data without timestamp conversion
+    const sensorData = await SensorData.find(query)
       .sort({ timestamp: -1 })
       .limit(parseInt(limit))
       .lean();

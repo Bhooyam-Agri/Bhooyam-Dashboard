@@ -7,7 +7,21 @@ const Filter = ({ onFilter }) => {
   const [endDate, setEndDate] = useState(null);
 
   const applyFilter = () => {
-    onFilter(startDate, endDate);
+    // Convert dates to HH:mm:ss format before filtering
+    const formatTimeForESP = (date) => {
+      if (!date) return null;
+      return date.toLocaleTimeString('en-IN', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    };
+
+    onFilter(
+      formatTimeForESP(startDate),
+      formatTimeForESP(endDate)
+    );
   };
 
   const resetFilter = () => {

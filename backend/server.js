@@ -22,6 +22,7 @@ const io = new Server(httpServer, {
     origin: [
       'http://localhost:5173',
       'http://localhost:5175',
+      'https://afe7-2401-4900-1c73-7602-a9ec-85bf-34a6-c035.ngrok-free.app',
       process.env.CLIENT_URL
     ].filter(Boolean),
     methods: ['GET', 'POST'],
