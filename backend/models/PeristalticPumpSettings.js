@@ -11,7 +11,7 @@ const peristalticPumpSettingsSchema = new mongoose.Schema({
     type: Number,
     required: true,
     min: 1,
-    max: 100  // Maximum 100 ml per minute
+    max: 30  // Maximum 30 ml per minute
   },
   targetVolume: {
     type: Number,
@@ -34,12 +34,26 @@ const peristalticPumpSettingsSchema = new mongoose.Schema({
   }
 });
 
-// Pre-save middleware to calculate PWM value
+// Pre-save middleware to calculate PWM value and optimal flow rate
 peristalticPumpSettingsSchema.pre('save', function(next) {
-  // Map flow rate (1-100 ml/min) to PWM value (10-255)
+  // Automatically determine optimal flow rate based on target volume
+  // For small volumes (less than 10ml), use a slower flow rate for precision
+  if (this.targetVolume < 10) {
+    this.flowRate = 5; // Slow flow for small amounts
+  } 
+  // For medium volumes, use a moderate flow rate
+  else if (this.targetVolume < 50) {
+    this.flowRate = 15; // Medium flow
+  } 
+  // For larger volumes, use the maximum flow rate for efficiency
+  else {
+    this.flowRate = 30; // Maximum flow
+  }
+  
+  // Map flow rate (1-30 ml/min) to PWM value (10-255)
   // Using the formula: PWM = (flow - minFlow) * (maxPWM - minPWM) / (maxFlow - minFlow) + minPWM
   const minFlow = 1;     // Minimum flow rate in ml/min
-  const maxFlow = 100;   // Maximum flow rate in ml/min
+  const maxFlow = 30;    // Maximum flow rate in ml/min (updated)
   const minPWM = 10;     // Minimum PWM value
   const maxPWM = 255;    // Maximum PWM value
   

@@ -29,39 +29,37 @@ const axiosWithRetry = async (config) => {
 
 exports.updatePumpSettings = async (req, res) => {
   try {
-    const { pumpNumber, flowRate, targetVolume } = req.body;
+    const { pumpNumber, targetVolume } = req.body;
 
     // Validate input
     if (!pumpNumber || pumpNumber < 1 || pumpNumber > 4) {
       return res.status(400).json({ error: 'Invalid pump number (1-4)' });
     }
-    if (flowRate < 1 || flowRate > 100) {
-      return res.status(400).json({ error: 'Flow rate must be between 1-100 ml/min' });
-    }
     if (targetVolume < 0 || targetVolume > 1000) {
       return res.status(400).json({ error: 'Target volume must be between 0-1000 ml' });
     }
 
-    // Calculate duration based on flow rate and target volume
-    // Duration (seconds) = (Target Volume (ml) / Flow Rate (ml/min)) * 60
-    const durationSeconds = targetVolume > 0 && flowRate > 0 
-      ? Math.round((targetVolume / flowRate) * 60)
-      : 0;
-
     // Create or update pump settings
+    // Flow rate will be automatically determined in the model's pre-save middleware
     let settings = await PeristalticPumpSettings.findOne({ pumpNumber });
     if (!settings) {
       settings = new PeristalticPumpSettings({
         pumpNumber,
-        flowRate,
-        targetVolume
+        targetVolume,
+        flowRate: 1 // Default value that will be overridden by pre-save hook
       });
     } else {
-      settings.flowRate = flowRate;
       settings.targetVolume = targetVolume;
       settings.lastUpdated = new Date();
+      // Flow rate will be automatically set in the pre-save hook
     }
     await settings.save();
+
+    // Calculate duration based on flow rate and target volume
+    // Duration (seconds) = (Target Volume (ml) / Flow Rate (ml/min)) * 60
+    const durationSeconds = targetVolume > 0 && settings.flowRate > 0 
+      ? Math.round((targetVolume / settings.flowRate) * 60)
+      : 0;
 
     // Send settings to ESP32
     if (ESP32_URL) {
@@ -93,7 +91,8 @@ exports.updatePumpSettings = async (req, res) => {
           settings: settings,
           calculatedValues: {
             pwm: settings.pwmValue,
-            durationSeconds: durationSeconds
+            durationSeconds: durationSeconds,
+            autoFlowRate: settings.flowRate
           }
         });
       }
@@ -104,7 +103,8 @@ exports.updatePumpSettings = async (req, res) => {
       settings,
       calculatedValues: {
         pwm: settings.pwmValue,
-        durationSeconds: durationSeconds
+        durationSeconds: durationSeconds,
+        autoFlowRate: settings.flowRate
       }
     });
 
