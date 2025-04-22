@@ -6,28 +6,128 @@ import Pagination from "./Pagination";
 import Filter from "./Filter";
 import DownloadCSV from "./DownloadCSV";
 import HiddenSensors from "./HiddenSensors";
-import RelayControl from "./RelayControl";
 import socketService from '../services/socketService';
 import HistoricalChart from './HistoricalChart';
+import WaterPumpControl from './WaterPumpControl';
+import PeristalticPumpControl from './PeristalticPumpControl';
+
+const espOptions = [
+  { value: 'esp1', label: 'ESP1 - Main Control' },
+  { value: 'esp2', label: 'ESP2 - Moisture Control' },
+  { value: 'esp3', label: 'ESP3 - Light Control' },
+  { value: 'esp4', label: 'ESP4 - Temperature Control' },
+  { value: 'esp5', label: 'ESP5 - Backup Control' }
+];
 
 const Dashboard = () => {
   const [sensorData, setSensorData] = useState([]);
-  const [averageData, setAverageData] = useState({
-    soilMoisture: { 0: null, 1: null },
-    airTemp: null,
-    airHumidity: null,
-    waterTemp: null,
-    airQuality: null,
-    lightIntensity: null
-  });
-  const [currentPage, setCurrentPage] = useState(1);
-  const [dataPerPage] = useState(15);
-  const [filters, setFilters] = useState({ startDate: null, endDate: null });
-  const [totalPages, setTotalPages] = useState(1);
+  const [selectedEsp, setSelectedEsp] = useState('esp1');
+  const [averageData, setAverageData] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [hiddenSensors, setHiddenSensors] = useState([]);
-  const [timeInterval, setTimeInterval] = useState(60);
+  const [filters, setFilters] = useState({
+    startDate: null,
+    endDate: null,
+    espId: 'esp1'
+  });
+
+  // Keep track of latest environmental data from ESP1
+  const [environmentalData, setEnvironmentalData] = useState({
+    temp: 0,
+    hum: 0,
+    waterTemp: 0,
+    airQuality: 0,
+    lightLevel: 0,
+    uvIndex: 0,
+    ec: 0,
+    ph: 0
+  });
+
+  useEffect(() => {
+    loadInitialData();
+    
+    const cleanup = socketService.onSensorData((message) => {
+      if (message.type === 'update' && message.data) {
+        // Update environmental data if message is from ESP1
+        if (message.data.espId === 'esp1') {
+          setEnvironmentalData({
+            temp: message.data.dht22?.temp || 0,
+            hum: message.data.dht22?.hum || 0,
+            waterTemp: message.data.waterTemperature?.value || 0,
+            airQuality: message.data.airQuality?.value || 0,
+            lightLevel: message.data.lightIntensity?.value || 0,
+            uvIndex: message.data.uvIndex?.value || 0,
+            ec: message.data.ec?.value || 0,
+            ph: message.data.ph?.value || 0
+          });
+        }
+
+        setSensorData(prevData => {
+          if (message.data.espId !== selectedEsp) return prevData;
+          
+          const newData = [...prevData];
+          newData.unshift(message.data); // Add new data at the beginning
+          if (newData.length > 30) {
+            newData.pop(); // Remove oldest data point
+          }
+          
+          // Update averages with latest data
+          setAverageData(calculateAverages([message.data], selectedEsp));
+          
+          return newData;
+        });
+      }
+    });
+
+    socketService.connect();
+
+    return () => {
+      if (cleanup) cleanup();
+      socketService.disconnect();
+    };
+  }, [selectedEsp]);
+
+  const loadInitialData = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Load data for selected ESP
+      const data = await fetchSensorData(1, 30, null, null, selectedEsp);
+      
+      // Also load ESP1 data if not currently selected
+      if (selectedEsp !== 'esp1') {
+        const esp1Data = await fetchSensorData(1, 1, null, null, 'esp1');
+        if (esp1Data.items && esp1Data.items.length > 0) {
+          const latestEsp1Data = esp1Data.items[0];
+          setEnvironmentalData({
+            temp: latestEsp1Data.dht22?.temp || 0,
+            hum: latestEsp1Data.dht22?.hum || 0,
+            waterTemp: latestEsp1Data.waterTemperature?.value || 0,
+            airQuality: latestEsp1Data.airQuality?.value || 0,
+            lightLevel: latestEsp1Data.lightIntensity?.value || 0,
+            uvIndex: latestEsp1Data.uvIndex?.value || 0,
+            ec: latestEsp1Data.ec?.value || 0,
+            ph: latestEsp1Data.ph?.value || 0
+          });
+        }
+      }
+
+      if (data.items && Array.isArray(data.items)) {
+        const filteredData = data.items
+          .filter(item => item.espId === selectedEsp)
+          .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp)); // Sort oldest to newest
+        setSensorData(filteredData);
+        if (filteredData.length > 0) {
+          setAverageData(calculateAverages([filteredData[filteredData.length - 1]], selectedEsp));
+        }
+      }
+    } catch (error) {
+      console.error("Error loading initial data:", error);
+      setError(error.message || "Failed to load data");
+    }
+    setLoading(false);
+  };
 
   const formatIndianTime = (timestamp) => {
     return new Date(timestamp).toLocaleString('en-IN', {
@@ -38,63 +138,6 @@ const Dashboard = () => {
       second: '2-digit'
     });
   };
-
-  const loadInitialData = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await fetchSensorData();
-      if (data.items && Array.isArray(data.items)) {
-        const validData = data.items.filter(item => {
-          return item && item.timestamp && (
-            (Array.isArray(item.soilMoisture) && item.soilMoisture.length > 0) ||
-            item.dht22?.temp || 
-            item.dht22?.hum || 
-            item.waterTemperature?.value ||
-            item.airQuality?.value ||
-            item.lightIntensity?.value
-          );
-        });
-        
-        if (validData.length > 0) {
-          setSensorData(validData);
-          setAverageData(calculateAverages([validData[0]]));
-        }
-      }
-    } catch (error) {
-      console.error("Error loading initial data:", error);
-      setError(error.message || "Failed to load data");
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => {
-    loadInitialData();
-    
-    const cleanup = socketService.onSensorData((message) => {
-      if (message.type === 'update' && message.data) {
-        setSensorData(prevData => {
-          const newData = message.data;
-          
-          // Just check if timestamp exists, don't modify it
-          if (!newData?.timestamp) return prevData;
-          
-          // Keep the raw timestamp as is
-          const updatedData = [newData, ...prevData].slice(0, 15);
-          setAverageData(calculateAverages([newData]));
-          
-          return updatedData;
-        });
-      }
-    });
-
-    socketService.connect();
-
-    return () => {
-      cleanup();
-      socketService.disconnect();
-    };
-  }, []);
 
   const fetchLatestData = async () => {
     if (filters.startDate || filters.endDate) return;
@@ -124,36 +167,52 @@ const Dashboard = () => {
     }
   };
 
-  const calculateAverages = (data) => {
-    if (data.length === 0) {
-      return {
-        soilMoisture: { 0: null, 1: null },
-        airTemp: null,
-        airHumidity: null,
-        waterTemp: null,
-        airQuality: null,
-        lightIntensity: null
+  const formatSensorValue = (value, unit = '') => {
+    if (value === 0 || value === '0') return `0${unit}`;
+    if (value === null || value === undefined || Number.isNaN(value) || value === 'nan' || value === 'NaN') {
+      return "Not Working";
+    }
+    return `${value}${unit}`;
+  };
+
+  const calculateAverages = (data, espId) => {
+    if (!data || data.length === 0) return {};
+
+    const parseValue = (value) => {
+      if (value === 0 || value === '0') return 0;
+      if (value === null || value === undefined || Number.isNaN(value) || value === 'nan' || value === 'NaN') return null;
+      return parseFloat(value);
+    };
+
+    const parseSoilMoisture = (value) => {
+      if (value === '0%' || value === 0) return 0;
+      if (!value || value === 'NaN%' || value === 'null%' || value === 'nan%') return null;
+      return parseFloat(value.replace('%', ''));
+    };
+
+    let averages = {
+      soilMoisture: {
+        0: parseSoilMoisture(data[0]?.soilMoisture?.[0]),
+        1: parseSoilMoisture(data[0]?.soilMoisture?.[1])
+      }
+    };
+
+    // Add ESP1-specific averages
+    if (espId === 'esp1') {
+      averages = {
+        ...averages,
+        airTemp: parseValue(data[0]?.dht22?.temp),
+        airHumidity: parseValue(data[0]?.dht22?.hum),
+        waterTemp: parseValue(data[0]?.waterTemperature?.value),
+        airQuality: parseValue(data[0]?.airQuality?.value),
+        lightIntensity: parseValue(data[0]?.lightIntensity?.value),
+        uvIndex: parseValue(data[0]?.uvIndex?.value),
+        ec: parseValue(data[0]?.ec?.value),
+        ph: parseValue(data[0]?.ph?.value)
       };
     }
 
-    const latestReading = data[0];
-    console.log('Processing latest reading:', latestReading);
-
-    // Parse soil moisture values, removing '%' if present
-    const soilMoisture0 = latestReading.soilMoisture?.[0] ? parseFloat(latestReading.soilMoisture[0].replace('%', '')) : null;
-    const soilMoisture1 = latestReading.soilMoisture?.[1] ? parseFloat(latestReading.soilMoisture[1].replace('%', '')) : null;
-
-    return {
-      soilMoisture: {
-        0: soilMoisture0,
-        1: soilMoisture1
-      },
-      airTemp: latestReading.dht22?.temp || null,
-      airHumidity: latestReading.dht22?.hum || null,
-      waterTemp: latestReading.waterTemperature?.value || null,
-      airQuality: latestReading.airQuality?.value || null,
-      lightIntensity: latestReading.lightIntensity?.value || null
-    };
+    return averages;
   };
 
   const handlePageChange = (pageNumber) => {
@@ -195,154 +254,143 @@ const Dashboard = () => {
     setHiddenSensors([]);
   };
 
+  const handleEspChange = (e) => {
+    const newEspId = e.target.value;
+    setSelectedEsp(newEspId);
+    setFilters(prev => ({
+      ...prev,
+      espId: newEspId
+    }));
+  };
+
   return (
     <div className="dashboard container mx-auto p-4">
       <h1 className="text-4xl font-bold mb-8 text-center">Sensor Dashboard</h1>
 
-      {/* Real-time data section */}
-      <div className="mb-8">
-        <h2 className="text-2xl font-bold mb-4">Real-time Monitoring</h2>
-        <div className="flex flex-col md:flex-row justify-between items-center mb-8 space-y-4 md:space-y-0">
-          <Filter onFilter={handleFilter} />
-          <DownloadCSV filters={filters} />
-        </div>
+      {/* ESP Selector */}
+      <div className="mb-6">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Select ESP Device:
+        </label>
+        <select
+          value={selectedEsp}
+          onChange={handleEspChange}
+          className="block w-full max-w-xs rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+        >
+          {espOptions.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
-        {error ? (
-          <p className="text-center text-red-500">{error}</p>
-        ) : (
-          <>
+      {error ? (
+        <p className="text-center text-red-500">{error}</p>
+      ) : (
+        <>
+          <div className="space-y-8">
+            {/* Show water pump control for all ESPs */}
             <div className="mb-8">
-              <RelayControl />
+              <WaterPumpControl espId={selectedEsp} />
             </div>
 
-            {loading && sensorData.length === 0 ? (
-              <div className="flex justify-center items-center min-h-[200px]">
-                <p className="text-blue-500">Loading data...</p>
+            {/* Show peristaltic pump control only for ESP1 */}
+            {selectedEsp === 'esp1' && (
+              <div className="mb-8">
+                <PeristalticPumpControl />
               </div>
-            ) : (
-              <>
-                <HiddenSensors 
-                  hiddenSensors={hiddenSensors}
-                  onUnhide={handleUnhideSensor}
-                  onUnhideAll={handleUnhideAll}
-                />
-
-                <div className="speedometers mb-12">
-                  <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-semibold text-center">Current Readings</h2>
-                    {hiddenSensors.length > 0 && (
-                      <span className="text-sm text-gray-500">
-                        {hiddenSensors.length} sensor{hiddenSensors.length !== 1 ? 's' : ''} hidden
-                      </span>
-                    )}
-                  </div>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {/* Soil Moisture Sensors */}
-                    {[0, 1].map((index) => (
-                      !hiddenSensors.includes(`soil-${index + 1}`) && (
-                        <Speedometer
-                          key={`soil-${index + 1}`}
-                          id={`soil-${index + 1}`}
-                          label={`Soil Moisture ${index + 1}`}
-                          value={averageData.soilMoisture[index] || "Not working"}
-                          max={100}  // Raw ADC value max
-                          unit="%"
-                          onHide={handleHideSensor}
-                        />
-                      )
-                    ))}
-
-                    {/* DHT22 Temperature */}
-                    {!hiddenSensors.includes('air-temp') && (
-                      <Speedometer
-                        key="air-temp"
-                        id="air-temp"
-                        label="Air Temperature"
-                        value={averageData.airTemp || "Not working"}
-                        max={100}
-                        unit="°C"
-                        onHide={handleHideSensor}
-                      />
-                    )}
-
-                    {/* DHT22 Humidity */}
-                    {!hiddenSensors.includes('air-humidity') && (
-                      <Speedometer
-                        key="air-humidity"
-                        id="air-humidity"
-                        label="Air Humidity"
-                        value={averageData.airHumidity || "Not working"}
-                        max={100}
-                        unit="%"
-                        onHide={handleHideSensor}
-                      />
-                    )}
-
-                    {/* Water Temperature */}
-                    {!hiddenSensors.includes('water-temp') && (
-                      <Speedometer
-                        key="water-temp"
-                        id="water-temp"
-                        label="Water Temperature"
-                        value={averageData.waterTemp || "Not working"}
-                        max={100}
-                        unit="°C"
-                        onHide={handleHideSensor}
-                      />
-                    )}
-
-                    {/* Air Quality */}
-                    {!hiddenSensors.includes('air-quality') && (
-                      <Speedometer
-                        key="air-quality"
-                        id="air-quality"
-                        label="Air Quality"
-                        value={averageData.airQuality || "Not working"}
-                        max={400}  // Raw ADC value max
-                        unit="ppm"
-                        onHide={handleHideSensor}
-                      />
-                    )}
-
-                    {/* Light Intensity */}
-                    {!hiddenSensors.includes('light') && (
-                      <Speedometer
-                        key="light"
-                        id="light"
-                        label="Light Intensity"
-                        value={averageData.lightIntensity || "Not working"}
-                        max={400}  // Raw ADC value max
-                        unit=""
-                        onHide={handleHideSensor}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                <div className="charts mb-12">
-                  <h2 className="text-2xl font-semibold mb-6 text-center">Individual Sensor Charts</h2>
-                  <div className="max-w-7xl mx-auto">
-                    <SensorLineChart data={sensorData} />
-                  </div>
-                </div>
-
-                <Pagination
-                  currentPage={currentPage}
-                  totalPages={totalPages}
-                  onPageChange={handlePageChange}
-                />
-              </>
             )}
-          </>
-        )}
-      </div>
 
-      {/* Historical data section */}
-      <div className="border-t border-gray-200 pt-8">
-        <h2 className="text-2xl font-bold mb-4">Historical Data Analysis</h2>
-        <HistoricalChart />
-      </div>
+            {/* Real-time data section */}
+            <div className="mb-8">
+              <h2 className="text-2xl font-bold mb-4">Real-time Monitoring - {selectedEsp.toUpperCase()}</h2>
+              <div className="flex flex-col md:flex-row justify-between items-center mb-8 space-y-4 md:space-y-0">
+                <Filter onFilter={handleFilter} />
+                <DownloadCSV filters={{ ...filters, espId: selectedEsp }} />
+              </div>
+
+              {loading ? (
+                <div className="flex justify-center items-center min-h-[200px]">
+                  <p className="text-blue-500">Loading data...</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {/* Current Values Display */}
+                  <div className="space-y-6">
+                    {/* Soil Moisture Section */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4">Soil Moisture Readings</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Soil Moisture 1</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(averageData.soilMoisture[0], '%')}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Soil Moisture 2</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(averageData.soilMoisture[1], '%')}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Environmental Readings Section */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-4">Environmental Readings</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Air Temperature</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(environmentalData.temp, '°C')}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Air Humidity</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(environmentalData.hum, '%')}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Water Temperature</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(environmentalData.waterTemp, '°C')}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Air Quality</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(environmentalData.airQuality)}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">Light Level</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(environmentalData.lightLevel)}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">UV Index</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(averageData.uvIndex)}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">EC</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(averageData.ec)}</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow">
+                          <h4 className="text-sm font-medium text-gray-500">pH</h4>
+                          <p className="text-2xl font-bold">{formatSensorValue(averageData.ph)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Charts */}
+                  <SensorLineChart 
+                    data={sensorData} 
+                    espId={selectedEsp}
+                    environmentalData={environmentalData} 
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Historical data section */}
+          <div className="border-t border-gray-200 pt-8">
+            <h2 className="text-2xl font-bold mb-4">Historical Data Analysis - {selectedEsp.toUpperCase()}</h2>
+            <HistoricalChart espId={selectedEsp} />
+          </div>
+        </>
+      )}
     </div>
   );
 };

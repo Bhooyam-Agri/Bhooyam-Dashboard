@@ -46,13 +46,36 @@ api.interceptors.response.use(
   }
 );
 
-let lastDataTimestamp = null;
+// Add utility functions for consistent data parsing
+export const parseValue = (value) => {
+  if (value === 0 || value === '0') return 0;
+  if (value === null || value === undefined || Number.isNaN(value) || value === 'nan' || value === 'NaN') return null;
+  return parseFloat(value);
+};
 
-export const fetchSensorData = async (page = 1, limit = 15, startDate, endDate) => {
+export const parseSoilMoisture = (value) => {
+  if (value === '0%' || value === 0) return 0;
+  if (!value || value === 'NaN%' || value === 'null%' || value === 'nan%') return null;
+  return parseFloat(value.replace('%', ''));
+};
+
+export const formatTimestamp = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+};
+
+export const fetchSensorData = async (page = 1, limit = 15, startDate, endDate, espId) => {
   try {
     const params = { page, limit };
     if (startDate) params.startDate = startDate;
     if (endDate) params.endDate = endDate;
+    if (espId) params.espId = espId;
 
     const response = await api.get('/data', { 
       params,
@@ -69,44 +92,42 @@ export const fetchSensorData = async (page = 1, limit = 15, startDate, endDate) 
 
     return response.data;
   } catch (error) {
-    if (error.response) {
-      throw new Error(error.response.data.error || 'Server error');
-    } else if (error.request) {
-      throw new Error('Could not connect to server');
-    } else {
-      throw error;
-    }
+    throw error;
   }
 };
 
-export const downloadCSV = async (startDate, endDate) => {
+export const updatePumpSettings = async (settings) => {
   try {
-    const params = {};
-
-    if (startDate) params.startDate = startDate;
-    if (endDate) params.endDate = endDate;
-
-    const response = await api.get('/data/export', {
-      params,
-      responseType: 'blob',
-    });
+    const response = await api.post('/api/relay/pump/settings', settings);
     return response.data;
   } catch (error) {
     throw error;
   }
 };
 
-export const login = async (email, password) => {
+export const getPumpSettings = async () => {
   try {
-    const response = await api.post('/api/auth/login', { email, password });
-    const { token } = response.data;
-    localStorage.setItem('token', token);
-    return token;
+    const response = await api.get('/api/relay/pump/settings');
+    return response.data;
   } catch (error) {
     throw error;
   }
 };
 
-export const logout = () => {
-  localStorage.removeItem('token');
+export const downloadCSV = async (startTime, endTime, espId) => {
+  try {
+    const params = {};
+    if (startTime) params.startDate = startTime;
+    if (endTime) params.endDate = endTime;
+    if (espId) params.espId = espId;
+
+    const response = await api.get('/data/export', {
+      params,
+      responseType: 'blob'
+    });
+    return response.data;
+  } catch (error) {
+    console.error('CSV download error:', error);
+    throw error;
+  }
 };

@@ -3,19 +3,55 @@ const Alert = require('../models/Alert');
 class SocketHandler {
   constructor(io) {
     this.io = io;
-    this.connectedClients = new Set();
+    this.connectedClients = new Map();
+    this.recentData = new Map(); // Store recent data for each ESP
+    this.MAX_RECENT_DATA = 100;
+  }
+
+  formatTimestamp(timestamp) {
+    if (!timestamp) return new Date().toISOString();
+    const date = new Date(timestamp);
+    return isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
   }
 
   // Handle new sensor data
   handleNewData(data) {
-    // Emit to all connected clients with ESP identifier
-    this.io.emit('newSensorData', {
-      espId: data.espId,
-      ...data
+    if (!data.espId) return;
+
+    // Ensure consistent timestamp format
+    const formattedData = {
+      ...data,
+      timestamp: this.formatTimestamp(data.timestamp)
+    };
+
+    // Store data in recent history
+    if (!this.recentData.has(data.espId)) {
+      this.recentData.set(data.espId, []);
+    }
+
+    const espData = this.recentData.get(data.espId);
+    espData.unshift(formattedData); // Add to beginning for newest first
+
+    // Keep only last MAX_RECENT_DATA points
+    if (espData.length > this.MAX_RECENT_DATA) {
+      espData.pop(); // Remove oldest data point
+    }
+
+    this.recentData.set(data.espId, espData);
+
+    // Emit to all connected clients
+    this.io.emit('sensorData', {
+      type: 'update',
+      data: formattedData
     });
     
     // Check for alerts
-    this.checkAlerts(data);
+    this.checkAlerts(formattedData);
+  }
+
+  // Get recent data for an ESP
+  getRecentData(espId) {
+    return this.recentData.get(espId) || [];
   }
 
   // Check if any sensor readings trigger alerts

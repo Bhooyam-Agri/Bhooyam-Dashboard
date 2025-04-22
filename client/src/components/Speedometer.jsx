@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { CircularProgressbar, buildStyles } from 'react-circular-progressbar';
 import 'react-circular-progressbar/dist/styles.css';
 import { FaEyeSlash } from 'react-icons/fa';
 
-const Speedometer = ({ id, label, value, max, unit, onHide }) => {
+// Use memo to prevent unnecessary re-renders
+const Speedometer = memo(({ id, label, value, max, unit, onHide }) => {
   // Convert value to number and handle invalid cases
   const numericValue = value === null || value === undefined || value === "Not working" 
     ? 0 
@@ -41,6 +42,26 @@ const Speedometer = ({ id, label, value, max, unit, onHide }) => {
     return '#10B981'; // Green
   };
 
+  const formatValue = (val) => {
+    if (val === 0 || val === '0') return `0${unit}`;
+    if (val === null || val === undefined || Number.isNaN(val) || val === 'nan' || val === 'NaN') {
+      return "Not Working";
+    }
+    return `${val}${unit}`;
+  };
+
+  const getRotation = () => {
+    if (value === null || value === undefined || Number.isNaN(value) || value === 'nan' || value === 'NaN') {
+      return 0; // Return to zero position when not working
+    }
+    const percentage = ((value - 0) / (max - 0)) * 100;
+    return Math.min(Math.max(percentage, 0), 100);
+  };
+
+  const rotation = getRotation();
+  const displayValue = formatValue(value);
+  const isNotWorking = displayValue === "Not Working";
+
   return (
     <div className="bg-white p-6 rounded-xl shadow-lg relative hover:shadow-xl transition-shadow duration-300">
       <button
@@ -62,7 +83,7 @@ const Speedometer = ({ id, label, value, max, unit, onHide }) => {
               rotation: 0.25,
               strokeLinecap: 'round',
               textSize: '16px',
-              pathTransitionDuration: 0.5,
+              pathTransitionDuration: 0.3, // Faster transition for live updates
               pathColor: getColor(),
               textColor: getColor(),
               trailColor: '#F3F4F6',
@@ -108,6 +129,7 @@ const Speedometer = ({ id, label, value, max, unit, onHide }) => {
       )}
     </div>
   );
-};
+});
 
+Speedometer.displayName = 'Speedometer';
 export default Speedometer;

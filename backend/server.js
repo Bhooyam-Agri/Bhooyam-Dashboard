@@ -11,6 +11,7 @@ const jwt = require('jsonwebtoken');
 const connectDB = require('./config/db');
 const relayRoutes = require('./routes/relayRoutes');
 const SensorData = require('./models/SensorData');
+const peristalticRoutes = require('./routes/peristalticRoutes');
 
 // Initialize Express
 const app = express();
@@ -184,6 +185,7 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/data', require('./routes/dataRoutes'));
 app.use('/api/analysis', authMiddleware, require('./routes/analysisRoutes'));
 app.use('/api/relay', relayRoutes);
+app.use('/api/peristaltic', peristalticRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

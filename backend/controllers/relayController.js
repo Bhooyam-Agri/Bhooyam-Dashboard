@@ -1,16 +1,9 @@
-// backend/controllers/relayController.js
-
 const axios = require('axios');
+const WaterPumpSettings = require('../models/WaterPumpSettings');
 require('dotenv').config();
-
-// Track relay state - initialize as false (OFF)
-let relayState = false;
 
 // ESP32 URL - should be configured in .env
 const ESP32_URL = process.env.ESP32_URL;
-
-// Add debug logging
-console.log('ESP32_URL:', ESP32_URL);
 
 // Increase timeout and add retry logic
 const axiosConfig = {
@@ -36,108 +29,84 @@ const axiosWithRetry = async (config) => {
   throw lastError;
 };
 
-// Initialize relay state to OFF when server starts
-const initializeRelay = async () => {
+exports.updatePumpSettings = async (req, res) => {
   try {
-    if (!ESP32_URL) {
-      console.error('ESP32_URL not configured. Please check your .env file');
-      return;
+    const { espId, onDuration, offDuration } = req.body;
+
+    if (!espId || !['esp1', 'esp2', 'esp3', 'esp4', 'esp5'].includes(espId)) {
+      return res.status(400).json({ error: 'Valid ESP ID is required' });
     }
 
-    console.log('Initializing relay with URL:', ESP32_URL);
+    // Validate durations
+    if (onDuration < 1 || onDuration > 3600) {
+      return res.status(400).json({ error: 'ON duration must be between 1 and 3600 seconds' });
+    }
+    if (offDuration < 1 || offDuration > 7200) {
+      return res.status(400).json({ error: 'OFF duration must be between 1 and 7200 seconds' });
+    }
 
-    try {
-      // Send OFF command to ESP32 at the correct endpoint
-      const response = await axiosWithRetry({
-        method: 'post',
-        url: `${ESP32_URL}/api/relay/toggle`,
-        data: { state: false },
-        timeout: axiosConfig.timeout
-      });
-      
-      console.log('Relay initialized successfully:', response.data);
-      relayState = false;
-    } catch (error) {
-      if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
-        console.error('Failed to initialize relay: connection timeout. Will retry on next request.');
-      } else {
-        console.error('Failed to initialize relay:', error.message);
+    // Find and update settings in database
+    let settings = await WaterPumpSettings.findOne({ espId });
+    if (!settings) {
+      settings = new WaterPumpSettings({ espId, onDuration, offDuration });
+    } else {
+      settings.onDuration = onDuration;
+      settings.offDuration = offDuration;
+      settings.lastUpdated = new Date();
+    }
+    await settings.save();
+
+    // Send settings to ESP32 in the required format
+    if (ESP32_URL) {
+      try {
+        const espData = {
+          pump: {
+            esp_id: espId,
+            on_time: onDuration,    // in seconds
+            off_time: offDuration,  // in seconds
+          }
+        };
+
+        console.log(`Sending pump settings to ${espId}:`, espData);
+
+        await axiosWithRetry({
+          method: 'post',
+          url: `${ESP32_URL}/api/pump/settings`,
+          data: espData,
+          timeout: axiosConfig.timeout
+        });
+      } catch (error) {
+        console.error(`Failed to send settings to ${espId}:`, error);
+        // Still save settings even if ESP32 is unreachable
       }
     }
+
+    res.json({
+      message: 'Water pump settings updated successfully',
+      settings
+    });
   } catch (error) {
-    console.error('Relay initialization error:', error);
+    console.error('Error updating pump settings:', error);
+    res.status(500).json({ error: 'Failed to update pump settings' });
   }
 };
 
-// Call initialization when module loads
-initializeRelay();
-
-exports.toggleRelay = async (req, res) => {
+exports.getPumpSettings = async (req, res) => {
   try {
-    if (!ESP32_URL) {
-      return res.status(500).json({ error: 'ESP32_URL not configured' });
+    const { espId } = req.query;
+
+    if (!espId || !['esp1', 'esp2', 'esp3', 'esp4', 'esp5'].includes(espId)) {
+      return res.status(400).json({ error: 'Valid ESP ID is required' });
     }
 
-    const newState = req.body.state;
-    const command = newState ? 'ON' : 'OFF';
-
-    try {
-      // Send command to ESP32 at the correct endpoint
-      const response = await axiosWithRetry({
-        method: 'post',
-        url: `${ESP32_URL}/api/relay/toggle`,
-        data: { state: command },
-        timeout: axiosConfig.timeout
-      });
-
-      if (response.status === 200) {
-        relayState = newState;
-        return res.json({ state: relayState });
-      }
-    } catch (error) {
-      console.error('ESP32 communication error:', error.message);
-      return res.status(503).json({ 
-        error: 'ESP32 not reachable. Check connection.',
-        details: error.message 
-      });
+    let settings = await WaterPumpSettings.findOne({ espId });
+    if (!settings) {
+      settings = new WaterPumpSettings({ espId });
+      await settings.save();
     }
+    res.json(settings);
   } catch (error) {
-    console.error('Relay toggle error:', error);
-    return res.status(500).json({ 
-      error: 'Failed to control relay',
-      details: error.message 
-    });
-  }
-};
-
-exports.getRelayState = async (req, res) => {
-  try {
-    if (!ESP32_URL) {
-      return res.status(500).json({ error: 'ESP32_URL not configured' });
-    }
-
-    try {
-      // Fetch relay state from ESP32
-      const response = await axiosWithRetry({
-        method: 'get',
-        url: `${ESP32_URL}/api/relay/state`,
-        timeout: axiosConfig.timeout
-      });
-      relayState = response.data.state === 'ON';
-      return res.json({ state: relayState });
-      
-    } catch (error) {
-      console.error('ESP32 communication error:', error.message);
-      return res.status(503).json({ 
-        error: 'ESP32 not reachable. Check connection.',
-        details: error.message 
-      });
-    }
-  } catch (error) {
-    console.error('Failed to get relay state:', error);
-    return res.status(500).json({ 
-      error: 'Failed to get relay state',
-      details: error.message 
-    });
+    console.error('Error fetching pump settings:', error);
+    res.status(500).json({ error: 'Failed to fetch pump settings' });
   }
 };

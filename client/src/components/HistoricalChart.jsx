@@ -1,19 +1,40 @@
 import React, { useState, useMemo } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { fetchSensorData } from '../services/api';
 
-const HistoricalChart = () => {
+const MAX_VISIBLE_POINTS = 30;
+
+const HistoricalChart = ({ espId }) => {
   const [startDate, setStartDate] = useState(null);
   const [endDate, setEndDate] = useState(null);
   const [historicalData, setHistoricalData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: MAX_VISIBLE_POINTS });
+
+  const handleScroll = (direction) => {
+    setVisibleRange(prev => {
+      if (direction === 'left' && prev.end < historicalData.length) {
+        return {
+          start: prev.start + MAX_VISIBLE_POINTS,
+          end: Math.min(prev.end + MAX_VISIBLE_POINTS, historicalData.length)
+        };
+      }
+      if (direction === 'right' && prev.start > 0) {
+        return {
+          start: Math.max(0, prev.start - MAX_VISIBLE_POINTS),
+          end: prev.start
+        };
+      }
+      return prev;
+    });
+  };
 
   const fetchHistoricalData = async () => {
     if (!startDate || !endDate) {
-      setError("Please select both start and end dates");
+      setError('Please select both start and end dates');
       return;
     }
 
@@ -21,64 +42,101 @@ const HistoricalChart = () => {
     setError(null);
 
     try {
-      const response = await fetchSensorData(1, 1000, startDate.toISOString(), endDate.toISOString());
+      const response = await fetchSensorData(1, 1000, startDate, endDate, espId);
       if (response.items && Array.isArray(response.items)) {
-        setHistoricalData(response.items);
+        // Filter for selected ESP
+        const filteredData = response.items.filter(item => item.espId === espId);
+        setHistoricalData(filteredData);
+      } else {
+        setError('No data available for selected period');
       }
-    } catch (err) {
-      setError("Failed to fetch historical data");
-      console.error(err);
+    } catch (error) {
+      setError('Failed to fetch historical data');
+      console.error(error);
     } finally {
       setLoading(false);
     }
   };
 
+  const formatTimestamp = (timestamp) => {
+    if (!timestamp) return '';
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return '';
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  };
+
   const formatData = useMemo(() => {
-    return historicalData.map(entry => ({
-      // Use raw timestamp directly
-      timestamp: entry.timestamp,
-      'Soil Moisture 1': entry.soilMoisture?.[0]?.replace('%', '') || null,
-      'Soil Moisture 2': entry.soilMoisture?.[1]?.replace('%', '') || null,
-      'Air Temp': entry.dht22?.temp || null,
-      'Air Humidity': entry.dht22?.hum || null,
-      'Water Temp': entry.waterTemperature?.value || null,
-      'Air Quality': entry.airQuality?.value || null,
-      'Light Level': entry.lightIntensity?.value || null
-    }));
-  }, [historicalData]);
+    const parseValue = (value) => {
+      if (value === 0) return 0; // Keep 0 as a valid value
+      if (value === null || value === undefined || Number.isNaN(value)) return null;
+      return parseFloat(value);
+    };
+
+    const parseSoilMoisture = (value) => {
+      if (value === '0%' || value === 0) return 0;
+      if (!value || value === 'NaN%' || value === 'null%') return null;
+      return parseFloat(value.replace('%', ''));
+    };
+
+    return historicalData
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+      .map(entry => ({
+        timestamp: formatTimestamp(entry.timestamp),
+        'Soil Moisture 1': parseSoilMoisture(entry.soilMoisture?.[0]),
+        'Soil Moisture 2': parseSoilMoisture(entry.soilMoisture?.[1]),
+        ...(entry.espId === 'esp1' ? {
+          'Air Temperature': parseValue(entry.dht22?.temp),
+          'Air Humidity': parseValue(entry.dht22?.hum),
+          'Water Temperature': parseValue(entry.waterTemperature?.value),
+          'Air Quality': parseValue(entry.airQuality?.value),
+          'Light Level': parseValue(entry.lightIntensity?.value),
+          'UV Index': parseValue(entry.uvIndex?.value),
+          'EC': parseValue(entry.ec?.value),
+          'pH': parseValue(entry.ph?.value)
+        } : {})
+      }))
+      .filter(entry => entry.timestamp); // Remove entries with invalid timestamps
+  }, [historicalData, visibleRange]);
 
   const chartConfigs = {
     moisture: {
-      title: 'Historical Moisture & Humidity',
-      dataKeys: ['Soil Moisture 1', 'Soil Moisture 2', 'Air Humidity'],
-      colors: ['#3B82F6', '#10B981', '#8B5CF6'],
+      title: 'Historical Soil Moisture',
+      dataKeys: ['Soil Moisture 1', 'Soil Moisture 2'],
+      colors: ['#3B82F6', '#10B981'],
       yAxisDomain: [0, 100]
     },
-    temperatures: {
-      title: 'Historical Temperature',
-      dataKeys: ['Air Temp', 'Water Temp'],
-      colors: ['#EF4444', '#F59E0B'],
-      yAxisDomain: [0, 50]
-    },
     environmental: {
-      title: 'Historical Environmental Conditions',
-      dataKeys: ['Air Quality', 'Light Level'],
-      colors: ['#6366F1', '#F59E0B'],
+      title: 'Historical Environmental Readings',
+      dataKeys: [
+        'Air Temperature',
+        'Air Humidity',
+        'Water Temperature',
+        'Air Quality',
+        'Light Level',
+        'UV Index',
+        'EC',
+        'pH'
+      ],
+      colors: [
+        '#EF4444', // Air Temperature
+        '#8B5CF6', // Air Humidity
+        '#F59E0B', // Water Temperature
+        '#6366F1', // Air Quality
+        '#EC4899', // Light Level
+        '#10B981', // UV Index
+        '#14B8A6', // EC
+        '#6366F1'  // pH
+      ],
       yAxisDomain: [0, 400]
     }
   };
 
   const renderChart = (config) => {
     if (!formatData.length) return null;
-
-    const calculateTickInterval = () => {
-      const dataLength = formatData.length;
-      // Show more ticks for smaller datasets, fewer for larger ones
-      if (dataLength <= 10) return 0; // Show all ticks
-      if (dataLength <= 20) return 1; // Show every other tick
-      if (dataLength <= 40) return 2; // Show every third tick
-      return Math.floor(dataLength / 10); // Show ~10 ticks for large datasets
-    };
 
     return (
       <div className="bg-white p-6 rounded-lg shadow-lg mb-8">
@@ -88,9 +146,31 @@ const HistoricalChart = () => {
             {startDate?.toLocaleDateString('en-IN')} to {endDate?.toLocaleDateString('en-IN')}
           </p>
         </div>
+
+        {/* Navigation controls */}
+        <div className="flex justify-between mb-4">
+          <button
+            onClick={() => handleScroll('right')}
+            disabled={visibleRange.start === 0}
+            className="px-3 py-1 bg-blue-500 text-white rounded disabled:opacity-50"
+          >
+            ← Older Data
+          </button>
+          <span className="text-sm text-gray-500">
+            Showing {Math.min(MAX_VISIBLE_POINTS, formatData.length)} points
+          </span>
+          <button
+            onClick={() => handleScroll('left')}
+            disabled={visibleRange.end >= historicalData.length}
+            className="px-3 py-1 bg-blue-500 text-white rounded disabled:opacity-50"
+          >
+            Newer Data →
+          </button>
+        </div>
+
         <div className="h-[400px]">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart 
+            <BarChart 
               data={formatData}
               margin={{ top: 20, right: 40, left: 20, bottom: 90 }}
             >
@@ -101,36 +181,35 @@ const HistoricalChart = () => {
                   fontSize: 11,
                   fill: '#4B5563',
                 }}
-                interval={calculateTickInterval()}
+                interval="preserveStart"
                 angle={-45}
                 textAnchor="end"
-                height={100}
-                tickMargin={30}
-                minTickGap={20}
-                scale="band"
-                padding={{ left: 30, right: 30 }}
+                height={60}
+                minTickGap={10}
               />
               <YAxis
                 domain={config.yAxisDomain}
                 tickFormatter={(value) => Math.round(value)}
               />
               <Tooltip 
-                formatter={(value) => value ? value.toFixed(2) : 'No data'}
+                formatter={(value, name) => {
+                  if (value === null) return ['Not Working', name];
+                  return [value.toFixed(2), name];
+                }}
                 labelFormatter={(label) => `Time: ${label}`}
               />
               <Legend />
               {config.dataKeys.map((key, index) => (
-                <Line
+                <Bar
                   key={key}
-                  type="monotone"
                   dataKey={key}
-                  stroke={config.colors[index]}
-                  dot={{ r: 1 }}
-                  activeDot={{ r: 5 }}
+                  fill={config.colors[index]}
                   name={key}
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={30}
                 />
               ))}
-            </LineChart>
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
@@ -186,8 +265,10 @@ const HistoricalChart = () => {
         <div className="text-center py-8">Loading historical data...</div>
       ) : (
         <>
+          {/* Soil Moisture Chart */}
           {renderChart(chartConfigs.moisture)}
-          {renderChart(chartConfigs.temperatures)}
+          
+          {/* Environmental Readings Chart */}
           {renderChart(chartConfigs.environmental)}
         </>
       )}
