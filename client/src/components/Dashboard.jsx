@@ -10,6 +10,8 @@ import socketService from '../services/socketService';
 import HistoricalChart from './HistoricalChart';
 import WaterPumpControl from './WaterPumpControl';
 import PeristalticPumpControl from './PeristalticPumpControl';
+import { Link } from "react-router-dom";
+import Navbar from "./navbar";
 
 const espOptions = [
   { value: 'esp1', label: 'ESP1 - Main Control' },
@@ -264,8 +266,10 @@ const Dashboard = () => {
   };
 
   return (
-    <div className="dashboard container mx-auto p-4">
-      <h1 className="text-4xl font-bold mb-8 text-center">Sensor Dashboard</h1>
+    <div className="flex justify-center items-center flex-col">
+    <Navbar/>
+       <div className="dashboard container mx-auto p-4">
+      <h1 className="text-2xl font-sm mb-8 text-center">Sensor Dashboard</h1>
 
       {/* ESP Selector */}
       <div className="mb-6">
@@ -392,6 +396,8 @@ const Dashboard = () => {
         </>
       )}
     </div>
+    </div>
+   
   );
 };
 
