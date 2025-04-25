@@ -1,0 +1,6 @@
+-fan control pin - 
+-splinkler pin - 
+-ph on off pin - 
+- water frequecny (expiry off after 3 days)
+- after every dosage through peristaltic pump, water motor turns on for 2 min for proper mixing.
+- 
