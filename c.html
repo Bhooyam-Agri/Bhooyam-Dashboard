@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Upload Image Demo</title>
+</head>
+<body>
+    <h1>Upload Captured Image</h1>
+
+    <button id="uploadBtn">Upload Image</button>
+
+    <div id="result" style="margin-top: 20px;"></div>
+
+    <script>
+       
+       async function uploadImage() {
+    const captureUrl = 'http://127.0.0.1:5004/capture'; // Capture endpoint
+    const imageUrl = 'http://127.0.0.1:5004/static/img.jpg';
+    const uploadUrl = 'http://127.0.0.1:5000/predict';
+
+    const resultDiv = document.getElementById('result');
+    resultDiv.innerText = 'Uploading...';
+
+    try {
+        // First hit the capture endpoint
+        const isCaptured = await fetch(captureUrl);
+        if (!isCaptured.ok) {
+            throw new Error('Failed to capture image: ' + isCaptured.statusText);
+        }
+
+        // Fetch the image WITHOUT no-cors (this will throw CORS error if server doesn't allow it)
+        const response = await fetch(imageUrl);
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch image: ' + response.statusText);
+        }
+
+        const blob = await response.blob();
+
+        // Create a File object from the Blob
+        const file = new File([blob], 'img.jpg', { type: blob.type || 'image/jpeg' });
+
+        // Create a FormData object and append the file
+        const formData = new FormData();
+        formData.append('file', file);
+
+        // Send the form data to the predict endpoint
+        const uploadResponse = await fetch(uploadUrl, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!uploadResponse.ok) {
+            throw new Error('Prediction failed: ' + uploadResponse.statusText);
+        }
+
+        const result = await uploadResponse.json();
+        console.log('Upload success:', result);
+        resultDiv.innerText = 'Upload Success! Response: ' + JSON.stringify(result);
+    } catch (error) {
+        console.error('Error uploading image:', error);
+        resultDiv.innerText = 'Upload Failed: ' + error.message;
+    }
+}
+
+document.getElementById('uploadBtn').addEventListener('click', uploadImage);
+</script>
+</body>
+</html>

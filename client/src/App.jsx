@@ -5,6 +5,7 @@ import './index.css'; // Ensure Tailwind directives are imported
 import Bhooyam from './components/About';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Homepage from './components/homepage';
+import Login from './components/login';
 
 function App() {
   return (
@@ -16,7 +17,7 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/waterpump" element={<h1 className="text-2xl font-bold">About Us</h1>} />
           <Route path="/settings" element={<PlantManagementSystem />} />
-          <Route path="/login" element={<h1 className="text-2xl font-bold">About Us</h1>} />
+          <Route path="/login" element={<Login/>} />
         </Routes>
       </BrowserRouter>
     </div>
